@@ -776,6 +776,8 @@ def main():
             print("[INFO] 使用代理")
 
         with SB(**opts) as sb:
+            if not precheck_cf_turnstile(sb, 0):
+                print("[WARN] CF 首页验证失败，继续尝试登录...")
             for i, (u, p) in enumerate(accounts, 1):
                 r = process(sb, u, p, i)
                 results.append(r)
