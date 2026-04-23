@@ -299,17 +299,12 @@ def precheck_cf_turnstile(sb, idx: int) -> bool:
 
         safe_screenshot(sb, shot(idx, "cf_homepage"))
 
-        # 是否是CF验证页
+        # 是否 CF 页面
         is_cf_page = sb.execute_script('''
             var body = document.body ? document.body.innerText : '';
-            if (body.includes('正在进行安全验证') ||
-                body.includes('Verify you are human') ||
-                body.includes('security check')) {
-                return true;
-            }
-
-            var cf = document.querySelector("input[name='cf-turnstile-response']");
-            return !!cf;
+            return body.includes('正在进行安全验证') ||
+                   body.includes('Verify you are human') ||
+                   document.querySelector("input[name='cf-turnstile-response']");
         ''')
 
         if not is_cf_page:
@@ -318,37 +313,34 @@ def precheck_cf_turnstile(sb, idx: int) -> bool:
 
         print("  ⚠️ 检测到 CF 验证页面")
 
-        # ✅ 关键：等待 Turnstile 真正加载（最多15秒）
-        print("  ⏳ 等待 Turnstile 加载...")
-        loaded = False
-        for _ in range(15):
-            loaded = sb.execute_script('''
-                // iframe 是否存在
-                var frames = document.querySelectorAll('iframe');
-                for (var i = 0; i < frames.length; i++) {
-                    var src = frames[i].src || '';
-                    if (src.includes('challenges.cloudflare') ||
-                        src.includes('turnstile')) {
-                        return true;
-                    }
-                }
-                return false;
+        # ✅ 等“页面稳定”而不是 iframe
+        print("  ⏳ 等待页面稳定...")
+        for i in range(20):
+            ready = sb.execute_script('''
+                var loading = document.querySelector('.loading-verifying');
+                if (loading && loading.style.display !== 'none') return false;
+
+                var body = document.body ? document.body.innerText : '';
+                if (body.includes('正在进行安全验证')) return false;
+
+                return true;
             ''')
-            if loaded:
+
+            if ready:
+                print(f"  ✅ 页面已稳定 ({i+1}s)")
                 break
+
             time.sleep(1)
+        else:
+            print("  [WARN] 页面一直未稳定，但继续尝试点击")
 
-        if not loaded:
-            print("  [WARN] Turnstile 未加载出来（可能被风控）")
-            return False
+        # ⭐ 关键：再额外等一会（你说的5~6秒）
+        print("  ⏳ 额外等待 6 秒...")
+        time.sleep(6)
 
-        print("  ✅ Turnstile 已加载，等待稳定(6秒)...")
-        time.sleep(6)  # ⭐ 你说的关键点
+        safe_screenshot(sb, shot(idx, "cf_ready"))
 
-        # 再截图一张（方便排查）
-        safe_screenshot(sb, shot(idx, "cf_loaded"))
-
-        # 如果已经自动过了
+        # 是否已经通过
         already_done = sb.execute_script('''
             var cf = document.querySelector("input[name='cf-turnstile-response']");
             return cf && cf.value && cf.value.length > 20;
@@ -358,12 +350,14 @@ def precheck_cf_turnstile(sb, idx: int) -> bool:
             print("  ✅ CF 已自动通过")
             return True
 
-        # 开始点击
-        for attempt in range(5):
+        # ✅ 开始点击（重点：多次点击 + 等待）
+        for attempt in range(6):
             print(f"  🖱️ 点击验证 (第{attempt+1}次)...")
 
             clicked = uc_click_with_timeout(sb, timeout=25)
-            time.sleep(4)
+
+            # ⭐ 点击后要等久一点（CF处理时间）
+            time.sleep(5)
 
             passed = sb.execute_script('''
                 var cf = document.querySelector("input[name='cf-turnstile-response']");
@@ -383,7 +377,7 @@ def precheck_cf_turnstile(sb, idx: int) -> bool:
                 time.sleep(3)
                 return True
 
-            # 如果点击失败，等久一点再试
+            # 点击失败 → 等更久
             if not clicked:
                 time.sleep(6)
 
