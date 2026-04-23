@@ -749,7 +749,7 @@ def renew(sb, sid: str, idx: int, username: str) -> Dict[str, Any]:
     result["old_expiry_cn"] = old_expiry_cn
 
     # =========================
-    # 🔘 点击续期按钮（稳定修复版）
+    # 🔘 点击续期按钮（修复版）
     # =========================
     print("  🔍 查找续期按钮...")
 
@@ -757,31 +757,35 @@ def renew(sb, sid: str, idx: int, username: str) -> Dict[str, Any]:
 
     try:
         clicked = sb.execute_script(f"""
-            var links = document.querySelectorAll('a[onclick*="handleServerRenewal"]');
+            return (function() {{
 
-            for (var i = 0; i < links.length; i++) {{
-                var oc = links[i].getAttribute('onclick') || '';
-                if (oc.indexOf('{sid}') !== -1) {{
-                    links[i].click();
-                    return "handleServerRenewal";
+                var links = document.querySelectorAll('a[onclick*="handleServerRenewal"]');
+
+                for (var i = 0; i < links.length; i++) {{
+                    var oc = links[i].getAttribute('onclick') || '';
+                    if (oc.includes("handleServerRenewal") && oc.includes('{sid}')) {{
+                        links[i].click();
+                        return "handleServerRenewal";
+                    }}
                 }}
-            }}
 
-            var btns = document.querySelectorAll('a.action-button, button, a');
+                var btns = document.querySelectorAll('a.action-button, button, a');
 
-            for (var i = 0; i < btns.length; i++) {{
-                var text = (btns[i].innerText || btns[i].textContent || '').trim();
+                for (var i = 0; i < btns.length; i++) {{
+                    var text = (btns[i].innerText || btns[i].textContent || '').trim();
 
-                if (text.indexOf('Renew Server') !== -1 ||
-                    (text.indexOf('Renew') !== -1 &&
-                     text.indexOf('Last') === -1 &&
-                     text.indexOf('Next') === -1)) {{
-                    btns[i].click();
-                    return "text:" + text;
+                    if (text.indexOf('Renew Server') !== -1 ||
+                        (text.indexOf('Renew') !== -1 &&
+                         text.indexOf('Last') === -1 &&
+                         text.indexOf('Next') === -1)) {{
+                        btns[i].click();
+                        return "text:" + text;
+                    }}
                 }}
-            }}
 
-            return "";
+                return "";
+
+            }})();
         """)
     except Exception as e:
         print(f"  [WARN] 点击异常: {e}")
