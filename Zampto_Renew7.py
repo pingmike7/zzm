@@ -295,11 +295,11 @@ def precheck_cf_turnstile(sb, idx: int) -> bool:
 
     try:
         sb.uc_open_with_reconnect("https://zampto.net", reconnect_time=10)
-        time.sleep(5)
+        time.sleep(3)
 
         safe_screenshot(sb, shot(idx, "cf_homepage"))
 
-        # 检测是否进入 CF 验证页
+        # 是否是CF验证页
         is_cf_page = sb.execute_script('''
             var body = document.body ? document.body.innerText : '';
             if (body.includes('正在进行安全验证') ||
@@ -316,25 +316,65 @@ def precheck_cf_turnstile(sb, idx: int) -> bool:
             print("  ✅ 未检测到 CF 验证")
             return True
 
-        print("  ⚠️ 检测到 CF 验证，开始处理...")
+        print("  ⚠️ 检测到 CF 验证页面")
 
+        # ✅ 关键：等待 Turnstile 真正加载（最多15秒）
+        print("  ⏳ 等待 Turnstile 加载...")
+        loaded = False
+        for _ in range(15):
+            loaded = sb.execute_script('''
+                // iframe 是否存在
+                var frames = document.querySelectorAll('iframe');
+                for (var i = 0; i < frames.length; i++) {
+                    var src = frames[i].src || '';
+                    if (src.includes('challenges.cloudflare') ||
+                        src.includes('turnstile')) {
+                        return true;
+                    }
+                }
+                return false;
+            ''')
+            if loaded:
+                break
+            time.sleep(1)
+
+        if not loaded:
+            print("  [WARN] Turnstile 未加载出来（可能被风控）")
+            return False
+
+        print("  ✅ Turnstile 已加载，等待稳定(6秒)...")
+        time.sleep(6)  # ⭐ 你说的关键点
+
+        # 再截图一张（方便排查）
+        safe_screenshot(sb, shot(idx, "cf_loaded"))
+
+        # 如果已经自动过了
+        already_done = sb.execute_script('''
+            var cf = document.querySelector("input[name='cf-turnstile-response']");
+            return cf && cf.value && cf.value.length > 20;
+        ''')
+
+        if already_done:
+            print("  ✅ CF 已自动通过")
+            return True
+
+        # 开始点击
         for attempt in range(5):
             print(f"  🖱️ 点击验证 (第{attempt+1}次)...")
 
             clicked = uc_click_with_timeout(sb, timeout=25)
             time.sleep(4)
 
-            # 判断是否通过
             passed = sb.execute_script('''
                 var cf = document.querySelector("input[name='cf-turnstile-response']");
                 if (cf && cf.value && cf.value.length > 20) return true;
 
                 var body = document.body ? document.body.innerText : '';
                 if (body.includes('验证成功') ||
-                    body.includes('success') ||
                     body.includes('正在等待 zampto.net 响应')) {
                     return true;
                 }
+
                 return false;
             ''')
 
@@ -343,8 +383,9 @@ def precheck_cf_turnstile(sb, idx: int) -> bool:
                 time.sleep(3)
                 return True
 
+            # 如果点击失败，等久一点再试
             if not clicked:
-                time.sleep(5)
+                time.sleep(6)
 
         print("  [WARN] CF 验证未通过")
         return False
