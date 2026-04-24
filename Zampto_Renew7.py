@@ -728,7 +728,7 @@ def renew(sb, sid: str, idx: int, username: str) -> Dict[str, Any]:
     safe_screenshot(sb, shot(idx, f"server_{sid_f}_loaded"))
 
     # =========================
-    # ⏱️ 等待时间加载（关键修复）
+    # ⏱️ 等待时间加载（关键）
     # =========================
     print("  ⏳ 等待时间加载...")
 
@@ -750,41 +750,45 @@ def renew(sb, sid: str, idx: int, username: str) -> Dict[str, Any]:
     result["old_expiry_cn"] = old_expiry_cn
 
     # =========================
-    # 🔘 点击续期按钮（修复）
+    # 🔘 点击续期按钮（终极稳定版）
     # =========================
     print("  🔍 查找续期按钮...")
 
     try:
-        clicked = sb.execute_script(f"""
-            return (function() {{
+        clicked = sb.execute_script("""
+            var sid = arguments[0];
+            var result = "";
 
-                var links = document.querySelectorAll('a[onclick*="handleServerRenewal"]');
+            var links = document.querySelectorAll('a[onclick*="handleServerRenewal"]');
 
-                for (var i = 0; i < links.length; i++) {{
-                    var oc = links[i].getAttribute('onclick') || '';
-                    if (oc.includes("handleServerRenewal") && oc.includes('{sid}')) {{
-                        links[i].click();
-                        return "handleServerRenewal";
-                    }}
-                }}
+            for (var i = 0; i < links.length; i++) {
+                var oc = links[i].getAttribute('onclick') || '';
+                if (oc.includes(sid)) {
+                    links[i].click();
+                    result = "handleServerRenewal";
+                    break;
+                }
+            }
 
+            if (!result) {
                 var btns = document.querySelectorAll('a.action-button, button, a');
 
-                for (var i = 0; i < btns.length; i++) {{
+                for (var i = 0; i < btns.length; i++) {
                     var text = (btns[i].innerText || btns[i].textContent || '').trim();
 
-                    if (text.indexOf('Renew') !== -1 &&
-                        text.indexOf('Last') === -1 &&
-                        text.indexOf('Next') === -1) {{
+                    if (text.includes('Renew') &&
+                        !text.includes('Last') &&
+                        !text.includes('Next')) {
                         btns[i].click();
-                        return "text:" + text;
-                    }}
-                }}
+                        result = "text:" + text;
+                        break;
+                    }
+                }
+            }
 
-                return "";
+            return result;
+        """, sid)
 
-            }})();
-        """)
     except Exception as e:
         result["message"] = f"点击失败: {e}"
         return result
@@ -799,7 +803,7 @@ def renew(sb, sid: str, idx: int, username: str) -> Dict[str, Any]:
     print(f"  ✅ 已点击续期按钮 (方式: {clicked})")
 
     # =========================
-    # ⏳ 等待弹窗 + Turnstile加载
+    # ⏳ 等待弹窗
     # =========================
     print("  ⏳ 等待验证组件加载 (12秒)...")
     time.sleep(12)
@@ -807,7 +811,7 @@ def renew(sb, sid: str, idx: int, username: str) -> Dict[str, Any]:
     safe_screenshot(sb, shot(idx, f"server_{sid_f}_modal"))
 
     # =========================
-    # 🔄 Turnstile 多次点击（强化版）
+    # 🔄 Turnstile（强化版）
     # =========================
     print("  🔄 处理 Turnstile...")
 
@@ -818,18 +822,21 @@ def renew(sb, sid: str, idx: int, username: str) -> Dict[str, Any]:
 
         time.sleep(6)
 
-        passed = sb.execute_script("""
-            var cf = document.querySelector("input[name='cf-turnstile-response']");
-            if (cf && cf.value && cf.value.length > 20) return true;
+        try:
+            passed = sb.execute_script("""
+                var cf = document.querySelector("input[name='cf-turnstile-response']");
+                if (cf && cf.value && cf.value.length > 20) return true;
 
-            var modal = document.getElementById('renewModal');
-            if (modal) {
-                var s = window.getComputedStyle(modal);
-                if (s && s.display === 'none') return true;
-            }
+                var modal = document.getElementById('renewModal');
+                if (modal) {
+                    var s = window.getComputedStyle(modal);
+                    if (s && s.display === 'none') return true;
+                }
 
-            return false;
-        """)
+                return false;
+            """)
+        except:
+            passed = False
 
         if passed:
             print(f"  ✅ Turnstile 已通过 (第{attempt+1}次)")
@@ -885,7 +892,7 @@ def renew(sb, sid: str, idx: int, username: str) -> Dict[str, Any]:
     notify(result["success"], username, sid, result["expiry_info"], result["screenshot"])
 
     return result
-
+    
 def process(sb, user: str, pwd: str, idx: int) -> Dict[str, Any]:
     result = {"username": user, "success": False, "message": "", "servers": []}
 
