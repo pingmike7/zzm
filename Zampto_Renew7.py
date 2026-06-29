@@ -30,7 +30,7 @@ def calc_expiry_time(renewal_time_str: str, minutes: int = 2880) -> str:
     if not renewal_time_str:
         return "未知"
     try:
-        dt = datetime.strptime(renewal_time_str, "%b %d, %Y %I:%M %p")
+        dt = datetime.strptime(renewal_time_str, "%b %d, %Y at %I:%M %p UTC")
         expiry = dt.replace(tzinfo=timezone.utc) + timedelta(minutes=minutes)
         return expiry.astimezone(CN_TZ).strftime("%Y年%m月%d日 %H时%M分")
     except:
@@ -40,7 +40,7 @@ def parse_renewal_datetime(time_str: str) -> Optional[datetime]:
     if not time_str:
         return None
     try:
-        return datetime.strptime(time_str.strip(), "%b %d, %Y %I:%M %p")
+        return datetime.strptime(time_str.strip(), "%b %d, %Y at %I:%M %p UTC")
     except:
         return None
 
@@ -472,19 +472,62 @@ def scroll_and_get_renewal_info(sb) -> Tuple[str, str]:
     try:
         sb.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(1)
-    except: pass
+    except:
+        pass
 
-    renewal_time, remain_time = "", ""
+    renewal_time = ""
+    remain_time = ""
+
+    # ✅ 1. 获取 Expiry（剩余时间）
     try:
-        renewal_time = sb.execute_script('''
-            var el = document.getElementById("lastRenewalTime");
-            return el ? el.textContent.trim() : "";
-        ''') or ""
-        remain_time = sb.execute_script('''
-            var el = document.getElementById("nextRenewalTime");
-            return el ? el.textContent.trim() : "";
-        ''') or ""
-    except: pass
+        remain_time = sb.execute_script("""
+            var nodes = document.querySelectorAll('div');
+            for (var i = 0; i < nodes.length; i++) {
+                var txt = nodes[i].innerText || "";
+
+                if (txt.includes("Expiry") || txt.includes("Next Renewal")) {
+                    var span = nodes[i].querySelector('span.font-medium, span.text-foreground');
+                    if (span) return span.innerText.trim();
+                }
+            }
+            return "";
+        """) or ""
+    except:
+        pass
+
+    # ✅ 2. 获取 last renewed（关键）
+    try:
+        renewal_time = sb.execute_script("""
+            var nodes = document.querySelectorAll('div');
+            for (var i = 0; i < nodes.length; i++) {
+                var txt = nodes[i].innerText || "";
+
+                if (txt.includes("Server last renewed")) {
+                    var span = nodes[i].querySelector('span.text-foreground');
+                    if (span) return span.innerText.trim();
+                }
+            }
+            return "";
+        """) or ""
+    except:
+        pass
+
+    # ✅ 3. 正则兜底（防止UI再改）
+    if not renewal_time or not remain_time:
+        try:
+            page = sb.get_page_source()
+
+            if not remain_time:
+                m = re.search(r"Expiry.*?(\d+\s*d.*?m)", page)
+                if m:
+                    remain_time = m.group(1)
+
+            if not renewal_time:
+                m = re.search(r"Server last renewed:.*?([A-Z][a-z]{2} .*? UTC)", page)
+                if m:
+                    renewal_time = m.group(1)
+        except:
+            pass
 
     return renewal_time, remain_time
 
