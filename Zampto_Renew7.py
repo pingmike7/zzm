@@ -11,6 +11,7 @@ AUTH_URL = "https://dash.zampto.net/auth/login"
 DASHBOARD_URL = "https://dash.zampto.net/homepage"
 OVERVIEW_URL = "https://dash.zampto.net/overview"
 SERVER_URL = "https://dash.zampto.net/server?id={}"
+SERVERS_URL = "https://dash.zampto.net/servers"
 OUTPUT_DIR = Path("output/screenshots")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -656,7 +657,7 @@ def logout(sb):
 def get_servers(sb, idx: int) -> Tuple[List[Dict[str, str]], str, Optional[str]]:
     servers, seen = [], set()
 
-    sb.open(DASHBOARD_URL)
+    sb.open(SERVERS_URL)
     time.sleep(5)
 
     handle_social_prompt(sb, idx)
@@ -701,7 +702,7 @@ def get_servers(sb, idx: int) -> Tuple[List[Dict[str, str]], str, Optional[str]]
 
     if not servers:
         print("  [INFO] 回退到页面解析...")
-        sb.open(OVERVIEW_URL)
+        sb.open(SERVERS_URL)
         time.sleep(3)
 
         handle_social_prompt(sb, idx)
