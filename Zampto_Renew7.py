@@ -493,7 +493,7 @@ def scroll_and_get_renewal_info(sb) -> Tuple[str, str]:
     remain_time = ""
 
     # =========================
-    # 1. Expiry (Next Renewal) —— 最稳定写法
+    # 1. Expiry (Next Renewal)
     # =========================
     try:
         remain_time = sb.execute_script("""
@@ -503,7 +503,6 @@ def scroll_and_get_renewal_info(sb) -> Tuple[str, str]:
                 if (span) return span.innerText.trim();
             }
 
-            // fallback
             const divs = document.querySelectorAll('div');
             for (let d of divs) {
                 const t = d.innerText || "";
@@ -520,24 +519,38 @@ def scroll_and_get_renewal_info(sb) -> Tuple[str, str]:
         pass
 
     # =========================
-    # 2. Server last renewed —— 精确抓 span.text-foreground
+    # 2. Server last renewed
     # =========================
     try:
         renewal_time = sb.execute_script("""
-            const el = document.querySelector('div:has(span.text-foreground)');
-            if (el && el.innerText.includes("Server last renewed")) {
-                const span = el.querySelector('span.text-foreground');
-                if (span) return span.innerText.trim();
-            }
-
-            // fallback：遍历
             const divs = document.querySelectorAll('div');
+
             for (let d of divs) {
                 const t = d.innerText || "";
+
                 if (t.includes("Server last renewed")) {
-                    const s = d.querySelector('span.text-foreground');
-                    if (s) return s.innerText.trim();
-                    return t;
+
+                    // 1) 优先 regex 从整段文本抓完整时间
+                    const match = t.match(
+                        /Server last renewed:\\s*([A-Za-z]{3}\\s\\d{1,2},\\s\\d{4}\\s+at\\s+.*?UTC)/
+                    );
+                    if (match) return match[1];
+
+                    // 2) fallback：找 span.text-foreground
+                    const span = d.querySelector('span.text-foreground');
+                    if (span) {
+                        const val = span.innerText.trim();
+                        if (val.includes("UTC")) return val;
+                    }
+
+                    // 3) 再兜底：任意 span 包含 UTC
+                    const spans = d.querySelectorAll('span');
+                    for (let s of spans) {
+                        const txt = (s.innerText || "").trim();
+                        if (txt.includes("UTC") && txt.includes(",")) {
+                            return txt;
+                        }
+                    }
                 }
             }
 
@@ -547,20 +560,23 @@ def scroll_and_get_renewal_info(sb) -> Tuple[str, str]:
         pass
 
     # =========================
-    # 3. 最强兜底（regex）
+    # 3. 最强兜底（page regex）
     # =========================
     if not renewal_time or not remain_time:
         try:
             page = sb.get_page_source()
 
             if not remain_time:
-                m = re.search(r"Expiry.*?(\d+\s*d.*?\d*\s*h.*?\d*\s*m)", page)
+                m = re.search(
+                    r"Expiry.*?(\d+\s*d.*?\d*\s*h.*?\d*\s*m)",
+                    page
+                )
                 if m:
                     remain_time = m.group(1)
 
             if not renewal_time:
                 m = re.search(
-                    r"Server last renewed:.*?<span[^>]*>([^<]+)</span>",
+                    r"Server last renewed:\s*<span[^>]*>([^<]+)</span>",
                     page
                 )
                 if m:
