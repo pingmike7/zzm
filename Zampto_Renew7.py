@@ -516,6 +516,12 @@ def handle_turnstile(sb, idx: int, sid_f: str) -> bool:
     return False
 
 def scroll_and_get_renewal_info(sb) -> Tuple[str, str]:
+    """
+    获取：
+        renewal_time = Server last renewed
+        remain_time  = Expiry (Next Renewal)
+    """
+
     try:
         sb.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(1)
@@ -526,42 +532,36 @@ def scroll_and_get_renewal_info(sb) -> Tuple[str, str]:
     remain_time = ""
 
     # ==========================================================
-    # Server last renewed
+    # 1. Server last renewed（全文匹配 UTC）
     # ==========================================================
     try:
-        renewal_time = sb.execute_script("""
-            const divs = document.querySelectorAll("div");
+        renewal_time = sb.execute_script(r"""
+            const body = document.body ? document.body.innerText : "";
 
-            for (const div of divs) {
+            let m = body.match(
+                /[A-Z][a-z]{2}\s+\d{1,2},\s+\d{4},\s+\d{1,2}:\d{2}\s+(AM|PM)\s+UTC/
+            );
+            if (m) return m[0];
 
-                const txt = (div.textContent || "").trim();
+            m = body.match(
+                /[A-Z][a-z]{2}\s+\d{1,2},\s+\d{4}\s+at\s+\d{1,2}:\d{2}\s+(AM|PM)\s+UTC/
+            );
+            if (m) return m[0];
 
-                if (!txt.includes("Server last renewed"))
-                    continue;
-
-                // 找所有 span
-                const spans = div.querySelectorAll("span");
-
-                for (const s of spans) {
-
-                    const t = (s.textContent || "").trim();
-
-                    if (t.includes("UTC"))
-                        return t;
-                }
-
-            }
+            // 最后只要包含 UTC 就返回
+            m = body.match(/.{0,40}UTC/);
+            if (m) return m[0].trim();
 
             return "";
         """) or ""
-    except:
+    except Exception:
         renewal_time = ""
 
     # ==========================================================
-    # Expiry
+    # 2. Expiry（DOM 查找）
     # ==========================================================
     try:
-        remain_time = sb.execute_script("""
+        remain_time = sb.execute_script(r"""
             const divs = document.querySelectorAll("div");
 
             for (const div of divs) {
@@ -569,64 +569,94 @@ def scroll_and_get_renewal_info(sb) -> Tuple[str, str]:
                 const txt = (div.textContent || "").trim();
 
                 if (
-                    !txt.includes("Expiry") &&
-                    !txt.includes("Next Renewal")
-                )
-                    continue;
+                    txt.includes("Expiry") ||
+                    txt.includes("Next Renewal")
+                ) {
 
-                const spans = div.querySelectorAll("span");
+                    const spans = div.querySelectorAll("span");
 
-                for (const s of spans) {
+                    for (const s of spans) {
 
-                    const t = (s.textContent || "").trim();
+                        const t = (s.textContent || "").trim();
 
-                    if (
-                        /^\\d+d/.test(t) ||
-                        /^\\d+h/.test(t) ||
-                        /^\\d+m/.test(t) ||
-                        /\\d+d.*\\d+h/.test(t)
-                    ) {
-                        return t;
+                        if (
+                            /^\d+d/.test(t) ||
+                            /^\d+h/.test(t) ||
+                            /^\d+m/.test(t) ||
+                            /\d+d.*\d+h/.test(t) ||
+                            /\d+h.*\d+m/.test(t)
+                        ) {
+                            return t;
+                        }
+
                     }
-
                 }
-
             }
 
             return "";
         """) or ""
-    except:
+    except Exception:
         remain_time = ""
 
     # ==========================================================
-    # Python Regex 兜底
+    # 3. Page Source Regex 兜底
     # ==========================================================
     if not renewal_time or not remain_time:
-
         try:
             page = sb.get_page_source()
 
+            # ---------- renewal ----------
             if not renewal_time:
+
                 m = re.search(
-                    r"Server last renewed:.*?<span[^>]*>\s*([^<]*UTC)\s*</span>",
-                    page,
-                    re.S,
+                    r"([A-Z][a-z]{2}\s+\d{1,2},\s+\d{4},\s+\d{1,2}:\d{2}\s+(?:AM|PM)\s+UTC)",
+                    page
                 )
+
+                if not m:
+                    m = re.search(
+                        r"([A-Z][a-z]{2}\s+\d{1,2},\s+\d{4}\s+at\s+\d{1,2}:\d{2}\s+(?:AM|PM)\s+UTC)",
+                        page
+                    )
+
                 if m:
                     renewal_time = m.group(1).strip()
 
+            # ---------- remain ----------
             if not remain_time:
+
                 m = re.search(
-                    r"Expiry.*?<span[^>]*>\s*([^<]+)\s*</span>",
-                    page,
-                    re.S,
+                    r"(\d+d\s+\d+h\s+\d+m)",
+                    page
                 )
+
+                if not m:
+                    m = re.search(
+                        r"(\d+d\s+\d+h)",
+                        page
+                    )
+
+                if not m:
+                    m = re.search(
+                        r"(\d+h\s+\d+m)",
+                        page
+                    )
+
+                if not m:
+                    m = re.search(
+                        r"(\d+d)",
+                        page
+                    )
+
                 if m:
                     remain_time = m.group(1).strip()
 
         except Exception as e:
             print(f"[WARN] Regex兜底失败: {e}")
 
+    # ==========================================================
+    # 4. Debug
+    # ==========================================================
     print(f"[DEBUG] renewal_time_raw = {renewal_time}")
     print(f"[DEBUG] remain_time_raw = {remain_time}")
 
