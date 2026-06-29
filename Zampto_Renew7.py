@@ -493,27 +493,24 @@ def scroll_and_get_renewal_info(sb) -> Tuple[str, str]:
     remain_time = ""
 
     # =========================
-    # 1. 获取 Expiry / Next Renewal
+    # 1. Expiry (Next Renewal) —— 最稳定写法
     # =========================
     try:
         remain_time = sb.execute_script("""
-            const nodes = document.querySelectorAll('div');
+            const el = document.querySelector('div:has(span.font-medium)');
+            if (el) {
+                const span = el.querySelector('span.font-medium');
+                if (span) return span.innerText.trim();
+            }
 
-            for (let i = 0; i < nodes.length; i++) {
-                const txt = (nodes[i].innerText || "").trim();
-
-                if (txt.includes("Expiry") || txt.includes("Next Renewal")) {
-
-                    // 优先：当前节点里的 span
-                    let span = nodes[i].querySelector('span.font-medium, span.text-foreground');
-                    if (span) return span.innerText.trim();
-
-                    // fallback：找兄弟节点
-                    let next = nodes[i].nextElementSibling;
-                    if (next) return next.innerText.trim();
-
-                    // 再 fallback：直接返回整段文本
-                    return txt;
+            // fallback
+            const divs = document.querySelectorAll('div');
+            for (let d of divs) {
+                const t = d.innerText || "";
+                if (t.includes("Expiry") || t.includes("Next Renewal")) {
+                    const s = d.querySelector('span');
+                    if (s) return s.innerText.trim();
+                    return t;
                 }
             }
 
@@ -523,30 +520,24 @@ def scroll_and_get_renewal_info(sb) -> Tuple[str, str]:
         pass
 
     # =========================
-    # 2. 获取 Server last renewed（修复重点）
+    # 2. Server last renewed —— 精确抓 span.text-foreground
     # =========================
     try:
         renewal_time = sb.execute_script("""
-            const nodes = document.querySelectorAll('div');
+            const el = document.querySelector('div:has(span.text-foreground)');
+            if (el && el.innerText.includes("Server last renewed")) {
+                const span = el.querySelector('span.text-foreground');
+                if (span) return span.innerText.trim();
+            }
 
-            for (let i = 0; i < nodes.length; i++) {
-                const txt = (nodes[i].innerText || "").trim();
-
-                if (txt.includes("Server last renewed")) {
-
-                    // 情况1：span 在内部
-                    let span = nodes[i].querySelector('span.text-foreground');
-                    if (span) return span.innerText.trim();
-
-                    // 情况2：span 在兄弟节点（你现在页面更可能是这个）
-                    let next = nodes[i].nextElementSibling;
-                    if (next) return next.innerText.trim();
-
-                    // 情况3：直接解析当前文本（兜底）
-                    const match = txt.match(/Server last renewed:\s*(.*)/);
-                    if (match && match[1]) return match[1].trim();
-
-                    return txt;
+            // fallback：遍历
+            const divs = document.querySelectorAll('div');
+            for (let d of divs) {
+                const t = d.innerText || "";
+                if (t.includes("Server last renewed")) {
+                    const s = d.querySelector('span.text-foreground');
+                    if (s) return s.innerText.trim();
+                    return t;
                 }
             }
 
@@ -556,26 +547,24 @@ def scroll_and_get_renewal_info(sb) -> Tuple[str, str]:
         pass
 
     # =========================
-    # 3. 正则兜底（防UI再次变化）
+    # 3. 最强兜底（regex）
     # =========================
     if not renewal_time or not remain_time:
         try:
             page = sb.get_page_source()
 
-            # Expiry 兜底
             if not remain_time:
-                m = re.search(r"(Expiry|Next Renewal)[^A-Za-z0-9]{0,10}(\d+\s*d.*?m)", page)
+                m = re.search(r"Expiry.*?(\d+\s*d.*?\d*\s*h.*?\d*\s*m)", page)
                 if m:
-                    remain_time = m.group(2)
+                    remain_time = m.group(1)
 
-            # last renewed 兜底（更宽松）
             if not renewal_time:
                 m = re.search(
-                    r"Server last renewed:?\s*([A-Z][a-z]{2}\s+\d{1,2},\s+\d{4}.*?UTC)",
+                    r"Server last renewed:.*?<span[^>]*>([^<]+)</span>",
                     page
                 )
                 if m:
-                    renewal_time = m.group(1)
+                    renewal_time = m.group(1).strip()
 
         except:
             pass
