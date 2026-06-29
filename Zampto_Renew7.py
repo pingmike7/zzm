@@ -491,6 +491,15 @@ def handle_turnstile(sb, idx: int, sid_f: str) -> bool:
     return False
 
 def scroll_and_get_renewal_info(sb) -> Tuple[str, str]:
+    """
+    获取：
+        renewal_time = Server last renewed
+        remain_time  = Expiry (Next Renewal)
+
+    返回：
+        ("Jun 29, 2026 at 1:17 PM UTC", "1d 23h 53m")
+    """
+
     try:
         sb.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(1)
@@ -500,136 +509,125 @@ def scroll_and_get_renewal_info(sb) -> Tuple[str, str]:
     renewal_time = ""
     remain_time = ""
 
-    # =========================
-    # 1. Expiry (Next Renewal)
-    # =========================
     try:
-        remain_time = sb.execute_script("""
-            const el = document.querySelector('div:has(span.font-medium)');
-            if (el) {
-                const span = el.querySelector('span.font-medium');
-                if (span) return span.innerText.trim();
-            }
+        result = sb.execute_script("""
+            const info = {
+                renewal: "",
+                remain: ""
+            };
 
-            const divs = document.querySelectorAll('div');
-            for (let d of divs) {
-                const t = d.innerText || "";
-                if (t.includes("Expiry") || t.includes("Next Renewal")) {
-                    const s = d.querySelector('span');
-                    if (s && s.innerText) return s.innerText.trim();
-                    return t.trim();
-                }
-            }
+            const divs = document.querySelectorAll("div");
 
-            return "";
-        """) or ""
-    except:
-        pass
+            for (const div of divs) {
 
-    # =========================
-    # 2. Server last renewed（稳定增强版）
-    # =========================
-    try:
-        renewal_time = sb.execute_script("""
-            const bodyText = document.body ? document.body.innerText : "";
+                const text = (div.textContent || "").trim();
 
-            // 0. 最强优先：完整 UTC 时间
-            let m = bodyText.match(
-                /([A-Za-z]{3}\\s+\\d{1,2},\\s+\\d{4}\\s+at\\s+\\d{1,2}:\\d{2}\\s+(AM|PM)\\s+UTC)/
-            );
-            if (m) return m[1];
+                // -------------------------
+                // Server last renewed
+                // -------------------------
+                if (!info.renewal &&
+                    text.includes("Server last renewed")) {
 
-            // 1. 无 AM/PM 版本
-            m = bodyText.match(
-                /([A-Za-z]{3}\\s+\\d{1,2},\\s+\\d{4}\\s+at\\s+\\d{1,2}:\\d{2}\\s+UTC)/
-            );
-            if (m) return m[1];
+                    // 优先取 text-foreground
+                    let span = div.querySelector("span.text-foreground");
 
-            // 2. 从 DOM 找 Server last renewed 所在块
-            const blocks = document.querySelectorAll('div');
+                    if (span) {
+                        info.renewal = span.innerText.trim();
+                    } else {
 
-            for (let d of blocks) {
-                const text = (d.innerText || "").trim();
-                if (!text) continue;
+                        // fallback：找包含 UTC 的 span
+                        const spans = div.querySelectorAll("span");
 
-                if (text.includes("Server last renewed")) {
+                        for (const s of spans) {
+                            const t = (s.innerText || "").trim();
 
-                    const span1 = d.querySelector('span.text-foreground');
-                    if (span1 && span1.innerText.includes("UTC")) {
-                        return span1.innerText.trim();
-                    }
-
-                    const spans = d.querySelectorAll('span');
-                    for (let s of spans) {
-                        const t = (s.innerText || "").trim();
-                        if (t.includes("UTC") && t.length > 8) {
-                            return t;
+                            if (t.includes("UTC")) {
+                                info.renewal = t;
+                                break;
+                            }
                         }
                     }
-
-                    return text;
                 }
+
+                // -------------------------
+                // Expiry
+                // -------------------------
+                if (!info.remain &&
+                    (text.includes("Expiry") ||
+                     text.includes("Next Renewal"))) {
+
+                    let span = div.querySelector("span.font-medium");
+
+                    if (span) {
+                        info.remain = span.innerText.trim();
+                    } else {
+
+                        const spans = div.querySelectorAll("span");
+
+                        for (const s of spans) {
+
+                            const t = (s.innerText || "").trim();
+
+                            if (/\\d+d/.test(t) ||
+                                /\\d+h/.test(t) ||
+                                /\\d+m/.test(t)) {
+
+                                info.remain = t;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (info.renewal && info.remain)
+                    break;
             }
 
-            // 3. 最后兜底：只要 UTC 出现就抓片段
-            const loose = bodyText.match(/.{10,80}UTC/);
-            if (loose) return loose[0].trim();
+            return info;
+        """)
 
-            return "";
-        """) or ""
-    except:
-        renewal_time = ""
+        renewal_time = (result.get("renewal") or "").strip()
+        remain_time = (result.get("remain") or "").strip()
 
-    # =========================
-    # DEBUG（关键）
-    # =========================
-    print(f"[DEBUG] renewal_time_raw = {renewal_time}")
-    print(f"[DEBUG] remain_time_raw = {remain_time}")
+    except Exception as e:
+        print(f"[WARN] JS解析失败: {e}")
 
-    # =========================
-    # 3. Page source 兜底（Python regex）
-    # =========================
+    # -----------------------------------------
+    # Python Page Source 兜底
+    # -----------------------------------------
     if not renewal_time or not remain_time:
         try:
             page = sb.get_page_source()
 
+            if not renewal_time:
+                m = re.search(
+                    r"Server last renewed:.*?<span[^>]*>\s*([^<]*UTC)\s*</span>",
+                    page,
+                    re.S
+                )
+                if m:
+                    renewal_time = m.group(1).strip()
+
             if not remain_time:
                 m = re.search(
-                    r"Expiry.*?(\d+\s*d.*?\d*\s*h.*?\d*\s*m)",
-                    page
+                    r"Expiry.*?<span[^>]*>\s*([0-9dhm ]+)\s*</span>",
+                    page,
+                    re.S
                 )
                 if m:
-                    remain_time = m.group(1)
+                    remain_time = m.group(1).strip()
 
-            if not renewal_time:
-                m = re.search(
-                    r"Server last renewed:\s*<span[^>]*>([^<]+UTC[^<]*)</span>",
-                    page
-                )
-                if m:
-                    renewal_time = m.group(1).strip()
+        except Exception as e:
+            print(f"[WARN] Regex兜底失败: {e}")
 
-            if not renewal_time:
-                m = re.search(
-                    r"([A-Za-z]{3}\s+\d{1,2},\s+\d{4}\s+at\s+\d{1,2}:\d{2}\s+(AM|PM)\s+UTC)",
-                    page
-                )
-                if m:
-                    renewal_time = m.group(1)
+    # -----------------------------------------
+    # Debug
+    # -----------------------------------------
+    print(f"[DEBUG] renewal_time_raw = {renewal_time}")
+    print(f"[DEBUG] remain_time_raw = {remain_time}")
 
-            if not renewal_time:
-                m = re.search(r"(.{10,80}UTC)", page)
-                if m:
-                    renewal_time = m.group(1).strip()
-
-        except:
-            pass
-
-    # =========================
-    # 4. 强制兜底（防止空值污染逻辑）
-    # =========================
     if not renewal_time:
-        renewal_time = "未知（未解析到 last renewed）"
+        renewal_time = "未知"
 
     if not remain_time:
         remain_time = "未知"
