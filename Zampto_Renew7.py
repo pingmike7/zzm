@@ -492,54 +492,91 @@ def scroll_and_get_renewal_info(sb) -> Tuple[str, str]:
     renewal_time = ""
     remain_time = ""
 
-    # ✅ 1. 获取 Expiry（剩余时间）
+    # =========================
+    # 1. 获取 Expiry / Next Renewal
+    # =========================
     try:
         remain_time = sb.execute_script("""
-            var nodes = document.querySelectorAll('div');
-            for (var i = 0; i < nodes.length; i++) {
-                var txt = nodes[i].innerText || "";
+            const nodes = document.querySelectorAll('div');
+
+            for (let i = 0; i < nodes.length; i++) {
+                const txt = (nodes[i].innerText || "").trim();
 
                 if (txt.includes("Expiry") || txt.includes("Next Renewal")) {
-                    var span = nodes[i].querySelector('span.font-medium, span.text-foreground');
+
+                    // 优先：当前节点里的 span
+                    let span = nodes[i].querySelector('span.font-medium, span.text-foreground');
                     if (span) return span.innerText.trim();
+
+                    // fallback：找兄弟节点
+                    let next = nodes[i].nextElementSibling;
+                    if (next) return next.innerText.trim();
+
+                    // 再 fallback：直接返回整段文本
+                    return txt;
                 }
             }
+
             return "";
         """) or ""
     except:
         pass
 
-    # ✅ 2. 获取 last renewed（关键）
+    # =========================
+    # 2. 获取 Server last renewed（修复重点）
+    # =========================
     try:
         renewal_time = sb.execute_script("""
-            var nodes = document.querySelectorAll('div');
-            for (var i = 0; i < nodes.length; i++) {
-                var txt = nodes[i].innerText || "";
+            const nodes = document.querySelectorAll('div');
+
+            for (let i = 0; i < nodes.length; i++) {
+                const txt = (nodes[i].innerText || "").trim();
 
                 if (txt.includes("Server last renewed")) {
-                    var span = nodes[i].querySelector('span.text-foreground');
+
+                    // 情况1：span 在内部
+                    let span = nodes[i].querySelector('span.text-foreground');
                     if (span) return span.innerText.trim();
+
+                    // 情况2：span 在兄弟节点（你现在页面更可能是这个）
+                    let next = nodes[i].nextElementSibling;
+                    if (next) return next.innerText.trim();
+
+                    // 情况3：直接解析当前文本（兜底）
+                    const match = txt.match(/Server last renewed:\s*(.*)/);
+                    if (match && match[1]) return match[1].trim();
+
+                    return txt;
                 }
             }
+
             return "";
         """) or ""
     except:
         pass
 
-    # ✅ 3. 正则兜底（防止UI再改）
+    # =========================
+    # 3. 正则兜底（防UI再次变化）
+    # =========================
     if not renewal_time or not remain_time:
         try:
             page = sb.get_page_source()
 
+            # Expiry 兜底
             if not remain_time:
-                m = re.search(r"Expiry.*?(\d+\s*d.*?m)", page)
+                m = re.search(r"(Expiry|Next Renewal)[^A-Za-z0-9]{0,10}(\d+\s*d.*?m)", page)
                 if m:
-                    remain_time = m.group(1)
+                    remain_time = m.group(2)
 
+            # last renewed 兜底（更宽松）
             if not renewal_time:
-                m = re.search(r"Server last renewed:.*?([A-Z][a-z]{2} .*? UTC)", page)
+                m = re.search(
+                    r"Server last renewed:?\s*([A-Z][a-z]{2}\s+\d{1,2},\s+\d{4}.*?UTC)",
+                    page
+                )
                 if m:
                     renewal_time = m.group(1)
+
         except:
             pass
 
