@@ -272,17 +272,31 @@ def check_renew_modal_open(sb) -> bool:
     try:
         return bool(sb.execute_script('''
             (function() {
-                var modal = document.getElementById('renewModal');
-                if (modal) {
-                    var style = window.getComputedStyle(modal);
-                    if (style.display !== 'none' && style.visibility !== 'hidden') return true;
+
+                // 1. 新版 Turnstile 容器
+                if (document.querySelector('#turnstile-container-renew')) {
+                    return true;
                 }
+
+                // 2. Turnstile iframe
                 var iframes = document.querySelectorAll(
                     'iframe[src*="turnstile"], iframe[src*="challenges.cloudflare"]'
                 );
                 if (iframes.length > 0) return true;
-                var cf = document.querySelector('.cf-turnstile, #turnstileContainer');
-                if (cf && cf.offsetWidth > 0) return true;
+
+                // 3. hidden response（新版已经直接出现 input）
+                var input = document.querySelector(
+                    'input[name="cf-turnstile-response"]'
+                );
+                if (input) return true;
+
+                // 4. fallback：只要出现 renew 标题区域
+                var txt = document.body ? document.body.innerText : "";
+                if (txt.includes("Renew Server") &&
+                    txt.includes("security verification")) {
+                    return true;
+                }
+
                 return false;
             })()
         '''))
