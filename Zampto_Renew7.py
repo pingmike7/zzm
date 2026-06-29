@@ -526,43 +526,64 @@ def scroll_and_get_renewal_info(sb) -> Tuple[str, str]:
     except:
         pass
 
+
     # =========================
-    # 2. Server last renewed
+    # 2. Server last renewed（永不空增强版 + DEBUG）
     # =========================
     try:
         renewal_time = sb.execute_script("""
             const blocks = document.querySelectorAll('div');
 
-            for (let d of blocks) {
-                const text = d.innerText || "";
+            let bestMatch = "";
 
+            for (let d of blocks) {
+                const text = (d.innerText || "").trim();
+                if (!text) continue;
+
+                // 命中主区域
                 if (text.includes("Server last renewed")) {
 
                     const span = d.querySelector('span.text-foreground');
-                    if (span) {
-                        const t = span.innerText.trim();
-                        if (t.includes("UTC")) return t;
+                    if (span && span.innerText.includes("UTC")) {
+                        return span.innerText.trim();
                     }
 
                     const spans = d.querySelectorAll('span');
                     for (let s of spans) {
                         const t = (s.innerText || "").trim();
-                        if (t.match(/[A-Za-z]{3}\\s\\d{1,2},\\s\\d{4}/) && t.includes("UTC")) {
+                        if (t.includes("UTC") && t.length > 10) {
                             return t;
                         }
                     }
 
-                    return text;
+                    bestMatch = text;
+                }
+
+                // 全局 UTC 捕获
+                const utcMatch = text.match(
+                    /([A-Za-z]{3}\\s+\\d{1,2},\\s+\\d{4}\\s+at\\s+\\d{1,2}:\\d{2}\\s+(AM|PM)\\s+UTC)/
+                );
+
+                if (utcMatch) {
+                    return utcMatch[1];
                 }
             }
 
-            return "";
+            return bestMatch;
         """) or ""
     except:
-        pass
+        renewal_time = ""
+
 
     # =========================
-    # 3. 最强兜底（page regex）
+    # DEBUG 输出（关键）
+    # =========================
+    print(f"[DEBUG] renewal_time_raw = {renewal_time}")
+    print(f"[DEBUG] remain_time_raw = {remain_time}")
+
+
+    # =========================
+    # 3. 最强兜底（page regex - 永不空）
     # =========================
     if not renewal_time or not remain_time:
         try:
@@ -578,20 +599,37 @@ def scroll_and_get_renewal_info(sb) -> Tuple[str, str]:
 
             if not renewal_time:
                 m = re.search(
-                    r"Server last renewed:\s*<span[^>]*>([^<]+)</span>",
+                    r"Server last renewed:\s*<span[^>]*>([^<]+UTC[^<]*)</span>",
                     page
                 )
+                if m:
+                    renewal_time = m.group(1).strip()
+
+            if not renewal_time:
+                m = re.search(
+                    r"([A-Za-z]{3}\s+\d{1,2},\s+\d{4}\s+at\s+\d{1,2}:\d{2}\s+(AM|PM)\s+UTC)",
+                    page
+                )
+                if m:
+                    renewal_time = m.group(1)
+
+            if not renewal_time:
+                m = re.search(r"(.{10,80}UTC)", page)
                 if m:
                     renewal_time = m.group(1).strip()
 
         except:
             pass
 
+
     # =========================
-    # DEBUG（关键）
+    # 4. 强制兜底（永不空）
     # =========================
-    print(f"[DEBUG] renewal_time_raw = {renewal_time}")
-    print(f"[DEBUG] remain_time_raw = {remain_time}")
+    if not renewal_time:
+        renewal_time = "未知（未解析到 last renewed）"
+
+    if not remain_time:
+        remain_time = "未知"
 
     return renewal_time, remain_time
 
