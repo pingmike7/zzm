@@ -29,28 +29,53 @@ def cn_now() -> datetime:
 def calc_expiry_time(renewal_time_str: str, minutes: int = 2880) -> str:
     if not renewal_time_str:
         return "未知"
-    try:
-        dt = datetime.strptime(renewal_time_str, "%b %d, %Y at %I:%M %p UTC")
-        expiry = dt.replace(tzinfo=timezone.utc) + timedelta(minutes=minutes)
-        return expiry.astimezone(CN_TZ).strftime("%Y年%m月%d日 %H时%M分")
-    except:
-        return "未知"
+
+    renewal_time_str = renewal_time_str.strip()
+
+    formats = [
+        "%b %d, %Y at %I:%M %p UTC",
+        "%b %d, %Y, %I:%M %p UTC",
+    ]
+
+    for fmt in formats:
+        try:
+            dt = datetime.strptime(renewal_time_str, fmt)
+            expiry = dt.replace(
+                tzinfo=timezone.utc
+            ) + timedelta(minutes=minutes)
+
+            return expiry.astimezone(CN_TZ).strftime(
+                "%Y年%m月%d日 %H时%M分"
+            )
+        except:
+            pass
+
+    return "未知"
 
 def parse_renewal_datetime(time_str: str) -> Optional[datetime]:
     if not time_str:
         return None
-    try:
-        time_str = time_str.replace("\xa0", " ").strip()
 
-        # 去掉 UTC（更稳）
-        time_str = time_str.replace(" UTC", "")
+    time_str = (
+        time_str
+        .replace("\xa0", " ")
+        .strip()
+    )
 
-        return datetime.strptime(
-            time_str,
-            "%b %d, %Y at %I:%M %p"
-        )
-    except:
-        return None
+    formats = [
+        "%b %d, %Y at %I:%M %p UTC",
+        "%b %d, %Y, %I:%M %p UTC",
+        "%b %d, %Y at %I:%M %p",
+        "%b %d, %Y, %I:%M %p",
+    ]
+
+    for fmt in formats:
+        try:
+            return datetime.strptime(time_str, fmt)
+        except:
+            pass
+
+    return None
 
 def mask(s: str, show: int = 1) -> str:
     if not s: return "***"
@@ -497,7 +522,7 @@ def scroll_and_get_renewal_info(sb) -> Tuple[str, str]:
         remain_time  = Expiry (Next Renewal)
 
     返回：
-        ("Jun 29, 2026 at 1:17 PM UTC", "1d 23h 53m")
+        ("Jun 29, 2026, 2:11 PM UTC", "1d 23h 53m")
     """
 
     try:
@@ -509,6 +534,9 @@ def scroll_and_get_renewal_info(sb) -> Tuple[str, str]:
     renewal_time = ""
     remain_time = ""
 
+    # -----------------------------------------
+    # JS 直接解析 DOM
+    # -----------------------------------------
     try:
         result = sb.execute_script("""
             const info = {
@@ -522,65 +550,77 @@ def scroll_and_get_renewal_info(sb) -> Tuple[str, str]:
 
                 const text = (div.textContent || "").trim();
 
-                // -------------------------
+                // =========================
                 // Server last renewed
-                // -------------------------
-                if (!info.renewal &&
-                    text.includes("Server last renewed")) {
+                // =========================
+                if (
+                    !info.renewal &&
+                    text.includes("Server last renewed")
+                ) {
 
-                    // 优先取 text-foreground
-                    let span = div.querySelector("span.text-foreground");
+                    const span = div.querySelector("span.text-foreground");
 
                     if (span) {
-                        info.renewal = span.innerText.trim();
+                        info.renewal = span.textContent.trim();
                     } else {
 
-                        // fallback：找包含 UTC 的 span
                         const spans = div.querySelectorAll("span");
 
                         for (const s of spans) {
-                            const t = (s.innerText || "").trim();
+
+                            const t = (s.textContent || "").trim();
 
                             if (t.includes("UTC")) {
                                 info.renewal = t;
                                 break;
                             }
+
                         }
                     }
                 }
 
-                // -------------------------
-                // Expiry
-                // -------------------------
-                if (!info.remain &&
-                    (text.includes("Expiry") ||
-                     text.includes("Next Renewal"))) {
+                // =========================
+                // Expiry (Next Renewal)
+                // =========================
+                if (
+                    !info.remain &&
+                    (
+                        text.includes("Expiry") ||
+                        text.includes("Next Renewal")
+                    )
+                ) {
 
-                    let span = div.querySelector("span.font-medium");
+                    const span = div.querySelector("span.font-medium");
 
                     if (span) {
-                        info.remain = span.innerText.trim();
+
+                        info.remain = span.textContent.trim();
+
                     } else {
 
                         const spans = div.querySelectorAll("span");
 
                         for (const s of spans) {
 
-                            const t = (s.innerText || "").trim();
+                            const t = (s.textContent || "").trim();
 
-                            if (/\\d+d/.test(t) ||
-                                /\\d+h/.test(t) ||
-                                /\\d+m/.test(t)) {
-
+                            if (
+                                /^\\d+d/.test(t) ||
+                                /^\\d+h/.test(t) ||
+                                /^\\d+m/.test(t) ||
+                                /\\d+d.*\\d+h/.test(t)
+                            ) {
                                 info.remain = t;
                                 break;
                             }
+
                         }
                     }
                 }
 
-                if (info.renewal && info.remain)
+                if (info.renewal && info.remain) {
                     break;
+                }
             }
 
             return info;
@@ -601,7 +641,7 @@ def scroll_and_get_renewal_info(sb) -> Tuple[str, str]:
 
             if not renewal_time:
                 m = re.search(
-                    r"Server last renewed:.*?<span[^>]*>\s*([^<]*UTC)\s*</span>",
+                    r"Server last renewed:.*?<span[^>]*>\\s*([^<]*UTC)\\s*</span>",
                     page,
                     re.S
                 )
@@ -610,7 +650,7 @@ def scroll_and_get_renewal_info(sb) -> Tuple[str, str]:
 
             if not remain_time:
                 m = re.search(
-                    r"Expiry.*?<span[^>]*>\s*([0-9dhm ]+)\s*</span>",
+                    r"Expiry.*?<span[^>]*>\\s*([0-9dhm ]+)\\s*</span>",
                     page,
                     re.S
                 )
