@@ -516,12 +516,6 @@ def handle_turnstile(sb, idx: int, sid_f: str) -> bool:
     return False
 
 def scroll_and_get_renewal_info(sb) -> Tuple[str, str]:
-    """
-    获取：
-        renewal_time = Server last renewed
-        remain_time  = Expiry (Next Renewal)
-    """
-
     try:
         sb.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(1)
@@ -532,7 +526,7 @@ def scroll_and_get_renewal_info(sb) -> Tuple[str, str]:
     remain_time = ""
 
     # ==========================================================
-    # 1. 获取 Server last renewed（单独执行）
+    # Server last renewed
     # ==========================================================
     try:
         renewal_time = sb.execute_script("""
@@ -540,26 +534,20 @@ def scroll_and_get_renewal_info(sb) -> Tuple[str, str]:
 
             for (const div of divs) {
 
-                const text = (div.textContent || "").trim();
+                const txt = (div.textContent || "").trim();
 
-                if (text.includes("Server last renewed")) {
+                if (!txt.includes("Server last renewed"))
+                    continue;
 
-                    const span = div.querySelector("span.text-foreground");
+                // 找所有 span
+                const spans = div.querySelectorAll("span");
 
-                    if (span)
-                        return span.textContent.trim();
+                for (const s of spans) {
 
-                    const spans = div.querySelectorAll("span");
+                    const t = (s.textContent || "").trim();
 
-                    for (const s of spans) {
-
-                        const t = (s.textContent || "").trim();
-
-                        if (t.includes("UTC"))
-                            return t;
-
-                    }
-
+                    if (t.includes("UTC"))
+                        return t;
                 }
 
             }
@@ -570,7 +558,7 @@ def scroll_and_get_renewal_info(sb) -> Tuple[str, str]:
         renewal_time = ""
 
     # ==========================================================
-    # 2. 获取 Expiry（单独执行）
+    # Expiry
     # ==========================================================
     try:
         remain_time = sb.execute_script("""
@@ -581,30 +569,24 @@ def scroll_and_get_renewal_info(sb) -> Tuple[str, str]:
                 const txt = (div.textContent || "").trim();
 
                 if (
-                    txt.includes("Expiry") ||
-                    txt.includes("Next Renewal")
-                ) {
+                    !txt.includes("Expiry") &&
+                    !txt.includes("Next Renewal")
+                )
+                    continue;
 
-                    const span = div.querySelector("span.font-medium");
+                const spans = div.querySelectorAll("span");
 
-                    if (span)
-                        return span.textContent.trim();
+                for (const s of spans) {
 
-                    const spans = div.querySelectorAll("span");
+                    const t = (s.textContent || "").trim();
 
-                    for (const s of spans) {
-
-                        const t = (s.textContent || "").trim();
-
-                        if (
-                            /^\\d+d/.test(t) ||
-                            /^\\d+h/.test(t) ||
-                            /^\\d+m/.test(t) ||
-                            /\\d+d.*\\d+h/.test(t)
-                        ) {
-                            return t;
-                        }
-
+                    if (
+                        /^\\d+d/.test(t) ||
+                        /^\\d+h/.test(t) ||
+                        /^\\d+m/.test(t) ||
+                        /\\d+d.*\\d+h/.test(t)
+                    ) {
+                        return t;
                     }
 
                 }
@@ -617,9 +599,10 @@ def scroll_and_get_renewal_info(sb) -> Tuple[str, str]:
         remain_time = ""
 
     # ==========================================================
-    # Python Page Source 兜底
+    # Python Regex 兜底
     # ==========================================================
     if not renewal_time or not remain_time:
+
         try:
             page = sb.get_page_source()
 
@@ -627,16 +610,16 @@ def scroll_and_get_renewal_info(sb) -> Tuple[str, str]:
                 m = re.search(
                     r"Server last renewed:.*?<span[^>]*>\s*([^<]*UTC)\s*</span>",
                     page,
-                    re.S
+                    re.S,
                 )
                 if m:
                     renewal_time = m.group(1).strip()
 
             if not remain_time:
                 m = re.search(
-                    r"Expiry.*?<span[^>]*>\s*([0-9dhm ]+)\s*</span>",
+                    r"Expiry.*?<span[^>]*>\s*([^<]+)\s*</span>",
                     page,
-                    re.S
+                    re.S,
                 )
                 if m:
                     remain_time = m.group(1).strip()
@@ -644,9 +627,6 @@ def scroll_and_get_renewal_info(sb) -> Tuple[str, str]:
         except Exception as e:
             print(f"[WARN] Regex兜底失败: {e}")
 
-    # ==========================================================
-    # Debug
-    # ==========================================================
     print(f"[DEBUG] renewal_time_raw = {renewal_time}")
     print(f"[DEBUG] remain_time_raw = {remain_time}")
 
