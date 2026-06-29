@@ -516,8 +516,8 @@ def scroll_and_get_renewal_info(sb) -> Tuple[str, str]:
                 const t = d.innerText || "";
                 if (t.includes("Expiry") || t.includes("Next Renewal")) {
                     const s = d.querySelector('span');
-                    if (s) return s.innerText.trim();
-                    return t;
+                    if (s && s.innerText) return s.innerText.trim();
+                    return t.trim();
                 }
             }
 
@@ -526,64 +526,68 @@ def scroll_and_get_renewal_info(sb) -> Tuple[str, str]:
     except:
         pass
 
-
     # =========================
-    # 2. Server last renewed（永不空增强版 + DEBUG）
+    # 2. Server last renewed（稳定增强版）
     # =========================
     try:
         renewal_time = sb.execute_script("""
-            const blocks = document.querySelectorAll('div');
+            const bodyText = document.body ? document.body.innerText : "";
 
-            let bestMatch = "";
+            // 0. 最强优先：完整 UTC 时间
+            let m = bodyText.match(
+                /([A-Za-z]{3}\\s+\\d{1,2},\\s+\\d{4}\\s+at\\s+\\d{1,2}:\\d{2}\\s+(AM|PM)\\s+UTC)/
+            );
+            if (m) return m[1];
+
+            // 1. 无 AM/PM 版本
+            m = bodyText.match(
+                /([A-Za-z]{3}\\s+\\d{1,2},\\s+\\d{4}\\s+at\\s+\\d{1,2}:\\d{2}\\s+UTC)/
+            );
+            if (m) return m[1];
+
+            // 2. 从 DOM 找 Server last renewed 所在块
+            const blocks = document.querySelectorAll('div');
 
             for (let d of blocks) {
                 const text = (d.innerText || "").trim();
                 if (!text) continue;
 
-                // 命中主区域
                 if (text.includes("Server last renewed")) {
 
-                    const span = d.querySelector('span.text-foreground');
-                    if (span && span.innerText.includes("UTC")) {
-                        return span.innerText.trim();
+                    const span1 = d.querySelector('span.text-foreground');
+                    if (span1 && span1.innerText.includes("UTC")) {
+                        return span1.innerText.trim();
                     }
 
                     const spans = d.querySelectorAll('span');
                     for (let s of spans) {
                         const t = (s.innerText || "").trim();
-                        if (t.includes("UTC") && t.length > 10) {
+                        if (t.includes("UTC") && t.length > 8) {
                             return t;
                         }
                     }
 
-                    bestMatch = text;
-                }
-
-                // 全局 UTC 捕获
-                const utcMatch = text.match(
-                    /([A-Za-z]{3}\\s+\\d{1,2},\\s+\\d{4}\\s+at\\s+\\d{1,2}:\\d{2}\\s+(AM|PM)\\s+UTC)/
-                );
-
-                if (utcMatch) {
-                    return utcMatch[1];
+                    return text;
                 }
             }
 
-            return bestMatch;
+            // 3. 最后兜底：只要 UTC 出现就抓片段
+            const loose = bodyText.match(/.{10,80}UTC/);
+            if (loose) return loose[0].trim();
+
+            return "";
         """) or ""
     except:
         renewal_time = ""
 
-
     # =========================
-    # DEBUG 输出（关键）
+    # DEBUG（关键）
     # =========================
     print(f"[DEBUG] renewal_time_raw = {renewal_time}")
     print(f"[DEBUG] remain_time_raw = {remain_time}")
 
-
     # =========================
-    # 3. 最强兜底（page regex - 永不空）
+    # 3. Page source 兜底（Python regex）
     # =========================
     if not renewal_time or not remain_time:
         try:
@@ -621,9 +625,8 @@ def scroll_and_get_renewal_info(sb) -> Tuple[str, str]:
         except:
             pass
 
-
     # =========================
-    # 4. 强制兜底（永不空）
+    # 4. 强制兜底（防止空值污染逻辑）
     # =========================
     if not renewal_time:
         renewal_time = "未知（未解析到 last renewed）"
