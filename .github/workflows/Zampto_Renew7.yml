@@ -8,6 +8,7 @@ on:
     branches: [main]
     paths:
       - 'Zampto_Renew7.py'
+      - 'docs/**'
       - '.github/workflows/Zampto_Renew7.yml'
 
 jobs:
@@ -33,7 +34,7 @@ jobs:
       - name: 安装依赖
         run: |
           sudo apt-get update && sudo apt-get install -y xvfb unzip ffmpeg
-          pip install seleniumbase>=4.25.0 pyvirtualdisplay>=3.0 requests>=2.31.0 vosk>=0.3.45 DrissionPage>=4.1.0 pysocks>=1.7.1
+          pip install seleniumbase>=4.25.0 pyvirtualdisplay>=3.0 requests>=2.31.0 vosk>=0.3.45 DrissionPage>=4.1.0 pysocks>=1.7.1 httpx[http2]>=0.27.0
 
       - name: 安装并启动代理
         env:
@@ -313,6 +314,11 @@ jobs:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           PROXY_SOCKS5: ${{ env.PROXY_SOCKS5 }}
+          # ── hCaptcha 通道（NoneCap 第三方求解）──────────────────
+          # HC_MODE: nc=NoneCap 优先（默认）| lib=本地图像库 | off=关闭
+          HC_MODE: ${{ vars.HC_MODE || 'nc' }}
+          # 唯一必填：NoneCap 的 API key（本地跑通的那把直接用）
+          NONECAP_API_KEY: ${{ secrets.NONECAP_API_KEY }}
         run: python Zampto_Renew7.py
 
       - name: 上传截图
